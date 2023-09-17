@@ -14,6 +14,8 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -55,9 +57,7 @@ public final class DBConnector {
         MongoDatabase db = mongoClient.getDatabase(dbName);
 
         MongoCollection<Document> collection = db.getCollection("Students");
-        //System.out.println(new String(encrypt(password))); testing
-        Bson comparison = and(eq("uniqueId", uniqueId), eq("password.$binary.base64", new String(encrypt(password))));
-        //TODO password encrypted comparison not working
+        Bson comparison = and(eq("uniqueId", uniqueId), eq("password", retrieveHash(password)));
         Document doc = collection.find(comparison).first();
 
         if (doc != null) {
@@ -90,13 +90,14 @@ public final class DBConnector {
         MongoDatabase db = mongoClient.getDatabase(dbName);
 
         MongoCollection<Document> collection = db.getCollection("Students");
-        System.out.println(student.courses());
+        //System.out.println(student.courses());
+
 
         Bson filter = eq("uniqueId", student.uniqueId());
         Bson update = Updates.combine(Updates.set("name", encrypt(student.name())),
                 Updates.set("age", encrypt(String.valueOf(student.age()))),
                 Updates.set("mail", encrypt(student.mail())),
-                Updates.set("password", encrypt(password)));
+                Updates.set("password", retrieveHash(password)));
         UpdateOptions options = new UpdateOptions().upsert(true);
         collection.updateOne(filter, update, options);
 
@@ -152,15 +153,39 @@ public final class DBConnector {
         try {
             IvParameterSpec iv = new IvParameterSpec(ivParam.getBytes(StandardCharsets.UTF_8));
 
-            SecretKeySpec skeySpec = new SecretKeySpec(keySpec.getBytes(StandardCharsets.UTF_8),
-                    "AES");
+            //TODO javax.crypto.IllegalBlockSizeException: Input length must be multiple of 16 when decrypting with padded cipher
+            SecretKeySpec sKeySpec = new SecretKeySpec(keySpec.getBytes(StandardCharsets.UTF_8), "AES");
             Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING");
-            cipher.init(Cipher.DECRYPT_MODE, skeySpec, iv);
+            cipher.init(Cipher.DECRYPT_MODE, sKeySpec, iv);
 
             return new String(cipher.doFinal(Base64.getDecoder().decode(encrypted)));
         } catch (Exception ex) {
             ex.printStackTrace();
         }
         return null;
+    }
+
+    private String retrieveHash(String password){
+        // prepare SHA-256 hashing
+        String hashedPwd = "";
+        try {
+            MessageDigest instance = MessageDigest.getInstance("SHA-256");
+            hashedPwd = bytesToHex(instance.digest(password.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        }
+        return hashedPwd;
+    }
+
+    private String bytesToHex(byte[] hash) {
+        StringBuilder hexString = new StringBuilder(2 * hash.length);
+        for (byte b : hash) {
+            String hex = Integer.toHexString(0xff & b);
+            if (hex.length() == 1) {
+                hexString.append('0');
+            }
+            hexString.append(hex);
+        }
+        return hexString.toString();
     }
 }
